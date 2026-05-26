@@ -23,14 +23,16 @@ import asyncio
 import logging
 
 import asyncpg
-from langchain_anthropic import ChatAnthropic
+from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, Field
 
 from proxy.config import settings
 
 logger = logging.getLogger(__name__)
 
-_JUDGE_MODEL = "claude-haiku-4-5"
+# OpenRouter-style model identifier — keeps every LLM call routed through
+# OpenRouter for unified billing and to avoid pulling in langchain-anthropic.
+_JUDGE_MODEL = "anthropic/claude-haiku-4-5"
 _DEFAULT_SAMPLE_SIZE = 20
 _LOW_QUALITY_THRESHOLD = 0.60
 
@@ -67,7 +69,7 @@ _chain = None
 def _get_chain():
     global _chain
     if _chain is None:
-        llm = ChatAnthropic(
+        llm = ChatOpenAI(
             model=_JUDGE_MODEL,
             api_key=settings.openrouter_api_key,
             base_url=settings.openrouter_base_url,
