@@ -32,12 +32,15 @@ class Settings(BaseSettings):
     openrouter_api_key: str
     openrouter_base_url: str = "https://openrouter.ai/api/v1"
     database_url: str
-    qdrant_host: str = "localhost"
-    qdrant_port: int = 6333
+    qdrant_url: str
+    qdrant_api_key: str | None = None
     modal_embedder_app: str
     proxy_url: str = "http://localhost:8000"
     agent_run_interval_minutes: int = 15
     rules_reload_interval_sec: int = 60
+    langfuse_public_key: str | None = None
+    langfuse_secret_key: str | None = None
+    langfuse_host: str = "https://us.cloud.langfuse.com"
 
 
 settings = Settings()

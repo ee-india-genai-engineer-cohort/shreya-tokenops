@@ -11,6 +11,7 @@ Hot-path orchestration only. Business logic lives in:
 import asyncio
 import json
 import logging
+import os
 import sys
 import time
 import uuid
@@ -25,6 +26,7 @@ from langchain_core.messages import (
     HumanMessage,
     SystemMessage,
 )
+from langfuse.langchain import CallbackHandler as LangfuseCallbackHandler
 from pydantic import BaseModel
 
 from proxy import cache, classifier, config, ledger, router
@@ -76,6 +78,18 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     """Bring up external dependencies; reverse the order on shutdown."""
+    # Langfuse SDK reads its config from env vars; populate them from Settings
+    # here (the one place where os.environ assignment is sanctioned — required
+    # by langfuse>=4's OTel-based init). If keys are absent the handler is
+    # never constructed and instrumentation is a no-op.
+    if settings.langfuse_public_key and settings.langfuse_secret_key:
+        os.environ["LANGFUSE_PUBLIC_KEY"] = settings.langfuse_public_key
+        os.environ["LANGFUSE_SECRET_KEY"] = settings.langfuse_secret_key
+        os.environ["LANGFUSE_HOST"] = settings.langfuse_host
+        global _langfuse_handler
+        _langfuse_handler = LangfuseCallbackHandler()
+        logger.info("langfuse handler initialised", extra={"host": settings.langfuse_host})
+
     await ledger.init_pool()
     await cache.ensure_collection()
 
@@ -139,6 +153,10 @@ class ChatResponse(BaseModel):
 
 # --------------------------------------------------------------------- helpers
 _llm_cache: dict[str, ChatOpenAI] = {}
+
+# Langfuse callback handler — constructed once in lifespan if credentials
+# are set, otherwise stays None and instrumentation is a no-op.
+_langfuse_handler: LangfuseCallbackHandler | None = None
 
 # Strong references to background tasks so the asyncio scheduler does not
 # GC them mid-flight (event loop only holds weak refs to tasks).
@@ -262,7 +280,19 @@ async def chat_completions(
         model = router.select_model(tier)
 
         # 3. LLM call.
-        result = await _llm_for(model).ainvoke(_to_lc_messages(req.messages))
+        callbacks = [_langfuse_handler] if _langfuse_handler else []
+        result = await _llm_for(model).ainvoke(
+            _to_lc_messages(req.messages),
+            config={
+                "callbacks": callbacks,
+                "metadata": {
+                    "request_id": request_id,
+                    "tag": tag,
+                    "tier": tier,
+                    "model": model,
+                },
+            },
+        )
         content: str = result.content  # langchain returns str for plain chat
         usage = result.usage_metadata or {}
         tokens_in = int(usage.get("input_tokens", 0))

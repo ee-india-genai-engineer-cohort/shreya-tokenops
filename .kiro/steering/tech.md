@@ -22,8 +22,9 @@ inclusion: always
 | Embeddings | Modal + `BAAI/bge-small-en-v1.5` | GPU endpoint, 384-dim, normalized |
 | Database | PostgreSQL via `asyncpg` | Cost ledger, routing rules, agent decisions |
 | Dashboard | Streamlit | Fast to build, sufficient for portfolio |
-| Scheduling | APScheduler | Runs optimizer agent every 15 minutes |
+| Scheduling | APScheduler (local) / Modal cron (prod) | Runs optimizer agent every 15 minutes |
 | Config | `python-dotenv` + Pydantic Settings | Type-safe env loading |
+| LLM observability | Langfuse | Per-call traces, token cost, prompt versioning |
 
 ## LLM model tiers
 
@@ -71,18 +72,20 @@ not config — they cannot be overridden by the agent.
 
 ```
 # requirements.txt (exact pins for reproducibility)
-fastapi==0.115.0
-uvicorn[standard]==0.30.0
+fastapi==0.136.3
+uvicorn[standard]==0.48.0
+langchain==0.3.30
 langchain-openai==0.3.0
-langgraph==0.2.0
-qdrant-client==1.9.0
+langgraph==0.2.76
+qdrant-client==1.18.0
 asyncpg==0.29.0
 pydantic-settings==2.3.0
 modal==1.4.3
-streamlit==1.36.0
+streamlit==1.57.0
 apscheduler==3.10.4
 python-dotenv==1.0.1
 httpx==0.27.0
+langfuse==4.6.1
 ```
 
 Do not add dependencies not in this list without updating it first.

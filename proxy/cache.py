@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 
 COLLECTION_NAME = "prompt_cache"
 VECTOR_DIM = 384
-MODAL_TIMEOUT_SEC = 4.0
+MODAL_TIMEOUT_SEC = 8.0
 
 # Fixed UUID namespace so the same prompt always maps to the same point ID.
 # An upsert with a duplicate prompt then overwrites in place rather than
@@ -45,8 +45,8 @@ def _qdrant() -> AsyncQdrantClient:
     global _client
     if _client is None:
         _client = AsyncQdrantClient(
-            host=settings.qdrant_host,
-            port=settings.qdrant_port,
+            url=settings.qdrant_url,
+            api_key=settings.qdrant_api_key,
         )
     return _client
 
@@ -122,9 +122,9 @@ async def lookup(prompt: str) -> dict | None:
         return None
 
     try:
-        results = await _qdrant().search(
+        response = await _qdrant().query_points(
             collection_name=COLLECTION_NAME,
-            query_vector=vector,
+            query=vector,
             limit=1,
             score_threshold=config.current_rules.cache_threshold,
         )
@@ -132,9 +132,9 @@ async def lookup(prompt: str) -> dict | None:
         logger.warning("qdrant lookup failed", extra={"error": str(exc)})
         return None
 
-    if not results:
+    if not response.points:
         return None
-    return dict(results[0].payload or {})
+    return dict(response.points[0].payload or {})
 
 
 async def store(
