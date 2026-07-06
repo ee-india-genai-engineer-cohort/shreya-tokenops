@@ -2,7 +2,7 @@
 
 Demonstrates:
   - tiered routing      (50% low / 30% mid / 20% high mix by endpoint)
-  - semantic cache      (30% of prompts are slight rephrasings → ANN hits)
+  - semantic cache      (natural duplicates from the 30-prompt pool)
   - cost attribution    (each request is tagged by endpoint)
   - savings vs Opus     (counterfactual cost surfaced from the ledger)
 
@@ -34,7 +34,6 @@ from proxy.config import settings
 
 HOST_APP_URL = "http://localhost:8001"
 TOTAL_REQUESTS = 200
-NEAR_DUP_RATE = 0.30
 INTER_REQUEST_DELAY_SEC = 0.10
 
 # Endpoint share of total traffic (shares sum to 1.00).
@@ -49,37 +48,16 @@ DISTRIBUTION: list[tuple[str, float]] = [
 ]
 
 
-_REPHRASERS = (
-    lambda p: f"Please {p[0].lower()}{p[1:]}",
-    lambda p: p.rstrip(".?!") + "?",
-    lambda p: p.lower(),
-    lambda p: p + " Thanks!",
-    lambda p: f"Could you help with this: {p}",
-    lambda p: p.replace("the ", "this "),
-)
-
-
-def _rephrase(prompt: str) -> str:
-    """Surface-level rephrasing intended to preserve semantic intent so the
-    Qdrant ANN search still finds the original entry above the cosine
-    threshold. Falls through unchanged for prompts that don't start with
-    a letter (e.g. code snippets) where the rephrasers don't make sense."""
-    if not prompt or not prompt[0].isalpha():
-        return prompt
-    return random.choice(_REPHRASERS)(prompt)
-
-
 def _build_plan() -> list[tuple[str, str]]:
     """Construct the (endpoint, prompt) request list according to the
-    distribution. Pads with random extras if rounding loses a few requests,
-    then shuffles so the access pattern is interleaved across endpoints."""
+    distribution. Prompts are drawn directly from the pool — with 30
+    prompts per endpoint and 200 total requests, natural duplicates occur
+    organically and let the semantic cache prove itself without bias."""
     plan: list[tuple[str, str]] = []
     for endpoint, share in DISTRIBUTION:
         count = round(TOTAL_REQUESTS * share)
         for _ in range(count):
-            base = random.choice(PROMPTS[endpoint])
-            text = _rephrase(base) if random.random() < NEAR_DUP_RATE else base
-            plan.append((endpoint, text))
+            plan.append((endpoint, random.choice(PROMPTS[endpoint])))
 
     while len(plan) < TOTAL_REQUESTS:
         endpoint = random.choice([e for e, _ in DISTRIBUTION])
@@ -132,7 +110,7 @@ async def main() -> None:
     plan = _build_plan()
     print(f"Seeding {len(plan)} requests through {HOST_APP_URL}")
     print(f"  endpoint distribution: " + ", ".join(f"{e} {s:.0%}" for e, s in DISTRIBUTION))
-    print(f"  near-duplicate rate:   {NEAR_DUP_RATE:.0%}")
+    print(f"  prompts per endpoint:  30")
     print(f"  delay between calls:   {INTER_REQUEST_DELAY_SEC}s")
     print()
 

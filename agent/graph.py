@@ -24,6 +24,7 @@ from typing import Literal, TypedDict
 
 import asyncpg
 from langchain_openai import ChatOpenAI
+from langfuse.langchain import CallbackHandler as LangfuseCallbackHandler
 from langgraph.graph import END, StateGraph
 # LangGraph 0.2.x — update import path if upgrading
 from langgraph.graph.state import CompiledStateGraph
@@ -70,6 +71,7 @@ class AnalysisPlan(BaseModel):
 
 
 _analysis_chain = None
+_langfuse_handler: LangfuseCallbackHandler | None = None
 
 
 def _get_analysis_chain():
@@ -84,6 +86,25 @@ def _get_analysis_chain():
         )
         _analysis_chain = llm.with_structured_output(AnalysisPlan)
     return _analysis_chain
+
+
+def _get_langfuse() -> LangfuseCallbackHandler | None:
+    """Lazy Langfuse handler. Returns None if creds are absent.
+
+    The agent runs as a Modal scheduled function, so there's no FastAPI
+    lifespan to hook — initialise on first use instead. The env-var write
+    here is the sanctioned counterpart to the proxy's lifespan init."""
+    global _langfuse_handler
+    if _langfuse_handler is not None:
+        return _langfuse_handler
+    if not settings.langfuse_public_key or not settings.langfuse_secret_key:
+        return None
+    import os
+    os.environ["LANGFUSE_PUBLIC_KEY"] = settings.langfuse_public_key
+    os.environ["LANGFUSE_SECRET_KEY"] = settings.langfuse_secret_key
+    os.environ["LANGFUSE_HOST"] = settings.langfuse_host
+    _langfuse_handler = LangfuseCallbackHandler()
+    return _langfuse_handler
 
 
 # ------------------------------------------------------------- db helpers (async)
@@ -242,8 +263,17 @@ def analyse_node(state: OptimizerState) -> OptimizerState:
     stats = state.get("stats", {})
 
     try:
+        handler = _get_langfuse()
+        callbacks = [handler] if handler else []
         plan: AnalysisPlan = _get_analysis_chain().invoke(
-            _ANALYSIS_INSTRUCTIONS.format(stats=json.dumps(stats, indent=2, default=str))
+            _ANALYSIS_INSTRUCTIONS.format(stats=json.dumps(stats, indent=2, default=str)),
+            config={
+                "callbacks": callbacks,
+                "metadata": {
+                    "run_id": state.get("run_id"),
+                    "component": "optimizer.analyse",
+                },
+            },
         )
         tools = list(plan.tools_to_run)
         reasoning = plan.reasoning

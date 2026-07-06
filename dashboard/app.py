@@ -36,18 +36,22 @@ MODEL_COLORS: dict[str, str] = {
     "anthropic/claude-opus-4-5":   COLOR_OPUS,
 }
 
+COLOR_PASSTHROUGH = "#3b82f6"
+
 TIER_COLORS: dict[str, str] = {
-    "low":   COLOR_HAIKU,
-    "mid":   COLOR_SONNET,
-    "high":  COLOR_OPUS,
-    "cache": COLOR_CACHE,
+    "low":         COLOR_HAIKU,
+    "mid":         COLOR_SONNET,
+    "high":        COLOR_OPUS,
+    "cache":       COLOR_CACHE,
+    "passthrough": COLOR_PASSTHROUGH,
 }
 
 TIER_DISPLAY: dict[str, str] = {
-    "low":   "Haiku",
-    "mid":   "Sonnet",
-    "high":  "Opus",
-    "cache": "Cache",
+    "low":         "Haiku",
+    "mid":         "Sonnet",
+    "high":        "Opus",
+    "cache":       "Cache",
+    "passthrough": "Passthrough",
 }
 
 
@@ -106,7 +110,8 @@ with st.sidebar:
     )
 
     today = date.today()
-    date_pick = st.date_input("Date range", value=(today, today))
+    week_ago = today - timedelta(days=7)
+    date_pick = st.date_input("Date range", value=(week_ago, today))
     if isinstance(date_pick, tuple) and len(date_pick) == 2:
         start_date, end_date = date_pick
     elif isinstance(date_pick, tuple) and len(date_pick) == 1:
@@ -234,7 +239,7 @@ panel2_df = fetch(
     FROM requests
     WHERE ts >= $1 AND ts < $2
       AND tag IS NOT NULL
-      AND tier IN ('low', 'mid', 'high')
+      AND tier IN ('low', 'mid', 'high', 'passthrough')
     GROUP BY tag, model
     ORDER BY tag, model
     """,
