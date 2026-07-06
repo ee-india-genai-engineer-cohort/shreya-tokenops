@@ -48,7 +48,6 @@ invoice. TokenOps changes this in real time.
 
 - Not a multi-tenant SaaS (no per-customer API key auth)
 - Not a streaming proxy (`stream: true` not supported)
-- Not provider-agnostic (Anthropic only in v1)
 - Not a fine-tuned classifier (prompt-based complexity scoring only)
 
 ## Business objectives

@@ -9,10 +9,11 @@ suggesting any architectural change.
 ## What this project is
 
 TokenOps is a **LLM cost intelligence proxy** — a FastAPI service that sits
-between application code and Anthropic's API. It caches semantically similar
-prompts, routes requests to the cheapest capable model, and tracks every cent
-by team and feature. A LangGraph optimizer agent runs in the background,
-autonomously tuning routing and cache rules without human intervention.
+between application code and LLM providers (via OpenRouter). It caches
+semantically similar prompts, routes requests to the cheapest capable model,
+and tracks every cent by team and feature. A LangGraph optimizer agent runs
+in the background, autonomously tuning routing and cache rules without human
+intervention.
 
 Full context is in `.kiro/steering/`:
 - `product.md` — what and why

@@ -40,7 +40,11 @@ Three planes, strictly separated — communicate only through Postgres.
 │                    │                                               │
 │              route (low→Haiku · mid→Sonnet · high→Opus)            │
 │                    │                                               │
-│              LLM call ──▶ fire-and-forget: cache.store + ledger   │
+│              LLM call (ChatOpenAI via OpenRouter)                   │
+│                    │                                               │
+│              fire-and-forget: cache.store + ledger                  │
+│                                                                    │
+│  Response: OpenAI-spec JSON + X-TokenOps-* headers                 │
 └────────────────────────────────────────────────────────────────────┘
 
 ┌── AGENT PLANE (separate process · every 15 min) ──────────────────┐
@@ -55,6 +59,12 @@ Three planes, strictly separated — communicate only through Postgres.
 
 ![Architecture](architecture.png)
 
+### Routing modes
+
+- **Passthrough (default):** The proxy honours the `model` field from the request body. Cost is still tracked and cached, but no classifier runs. If `model` is omitted, the classifier runs as a fallback.
+- **Auto (opt-in):** Send `X-TokenOps-Route: auto` to enable classifier-based routing — the proxy classifies complexity and picks the cheapest capable tier (Haiku / Sonnet / Opus).
+- **Cache skip:** Send `X-TokenOps-Cache: skip` to bypass the semantic cache for a request.
+
 ---
 
 ## Quick start
@@ -62,7 +72,7 @@ Three planes, strictly separated — communicate only through Postgres.
 ```bash
 docker-compose up -d                                     # Qdrant + Postgres
 docker compose exec -T postgres psql -U tokenops -d tokenops < db/schema.sql
-cp .env.example .env                                     # fill in API keys
+cp .env.example .env                                     # fill in OPENROUTER_API_KEY
 
 python3.11 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt -r requirements-dev.txt
@@ -135,6 +145,8 @@ modal deploy modal_app/embedder.py    # one-time
 Deploys `BAAI/bge-small-en-v1.5` (384-dim). Proxy calls it with a 4s timeout —
 if cold-starting, cache is skipped silently. Re-deploy only when `embedder.py` changes.
 
+For cloud deployment, TokenOps also includes Modal apps for the proxy, dashboard, and agent scheduler in `modal_app/` — these target Neon (Postgres), Qdrant Cloud, and Langfuse as managed backends.
+
 ---
 
 ## Dashboard
@@ -180,8 +192,6 @@ agent/          AGENT PLANE — off the hot path, separate process
 
 host_app/       DEMO — 4 AI endpoints generating realistic traffic
 dashboard/      Streamlit — 4-panel cost dashboard
-modal_app/      GPU embedding endpoint (bge-small-en-v1.5)
+modal_app/      GPU embedding endpoint + cloud deploy apps (proxy, dashboard, agent)
 db/             schema.sql — single source of truth for all tables
 ```
-
-
