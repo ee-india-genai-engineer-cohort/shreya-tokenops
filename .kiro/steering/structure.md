@@ -39,7 +39,10 @@ tokenops/
 │   └── app.py                  # Streamlit, 4 panels
 │
 ├── modal_app/
-│   └── embedder.py             # Modal GPU endpoint, bge-small-en-v1.5
+│   ├── embedder.py             # Modal GPU endpoint, bge-small-en-v1.5
+│   ├── proxy_app.py            # Modal web endpoint wrapping proxy for cloud deploy
+│   ├── dashboard_app.py        # Modal web endpoint wrapping Streamlit dashboard
+│   └── agent_app.py            # Modal cron function running optimizer agent
 │
 ├── db/
 │   └── schema.sql              # all table definitions (source of truth)
@@ -65,9 +68,15 @@ tokenops/
 
 ### `proxy/main.py`
 - FastAPI app instantiation and `lifespan` context manager
-- Single route: `POST /v1/chat/completions`
-- Extracts `messages`, `tag` (from body or `X-Tag` header), auth token
+- Single route: `POST /v1/chat/completions` (OpenAI-compatible response format)
+- Extracts `messages`, `tag` (from body or `X-Tag` header)
+- Reads `X-TokenOps-Route` header: `auto` enables classifier-based routing,
+  default is passthrough (honours `req.model`)
+- Reads `X-TokenOps-Cache` header: `skip` bypasses cache lookup
 - Orchestrates: cache → classify → route → call LLM → store → log
+- Returns OpenAI-spec JSON body (`id`, `object`, `created`, `model`, `choices`, `usage`)
+  with TokenOps metadata in response headers (`X-TokenOps-Request-ID`,
+  `X-TokenOps-Tier`, `X-TokenOps-Cost-USD`, `X-TokenOps-Cached`)
 - Fire-and-forget tasks for cache write and ledger write
 - Health check: `GET /health`
 - Does NOT contain business logic — delegates to other proxy modules
@@ -88,10 +97,11 @@ tokenops/
      ≥ `routing_rules.high_min_tokens` → `"high"`. Bands are tunable
      by the optimizer agent via `route_optimize.py`.
   2. **LLM-as-judge for the ambiguous middle band.** Calls
-     `claude-haiku-4-5` via `langchain-anthropic.with_structured_output`,
-     producing an internal `ComplexityResult(tier, reason)` Pydantic
-     model. Only the bare tier string is exposed at the module boundary;
-     `reason` is logged at DEBUG.
+     `claude-haiku-4-5` via `langchain-openai` (OpenRouter) with
+     `with_structured_output`, producing an internal
+     `ComplexityResult(tier, reason)` Pydantic model. Only the bare
+     tier string is exposed at the module boundary; `reason` is logged
+     at DEBUG.
 - Caps the prompt at 300 characters before sending to the LLM
 - Soft-fails to `"mid"` on any classifier exception — the proxy continues
   serving via Sonnet rather than returning 502 on a soft error
@@ -99,10 +109,11 @@ tokenops/
 
 ### `proxy/router.py`
 - `select_model(tier: str) -> str` — reads from MODEL_MAP
-- `compute_cost(model, tokens_in, tokens_out) -> float`
+- `compute_cost(model, tokens_in, tokens_out) -> float` — falls back to
+  Sonnet-tier pricing for unknown passthrough models and logs a warning
 - `counterfactual_cost(tokens_in, tokens_out) -> float` — what Opus
   would have cost, used for savings calculation in dashboard
-- Pure functions, no I/O, fully unit-testable
+- Pure functions (except logging), no network I/O, fully unit-testable
 
 ### `proxy/ledger.py`
 - `init_db()` — creates asyncpg connection pool on startup
@@ -112,9 +123,10 @@ tokenops/
 
 ### `proxy/config.py`
 - `Settings` class (Pydantic BaseSettings) — loads all env vars
+  (`qdrant_url`, `qdrant_api_key`, `langfuse_*`, etc.)
 - `RoutingRules` dataclass — in-memory cache of latest DB rules
-- `reload_loop()` — async background task, polls DB every 60s,
-  calls `asyncio.get_event_loop().run_until_complete` to swap rules
+- `reload_rules_loop()` — async background task, polls DB every 60s,
+  swaps in-memory RoutingRules via `__dict__.update` (atomic in asyncio)
 - Single `settings` instance imported by all other proxy modules
 
 ### `agent/graph.py`
@@ -168,6 +180,16 @@ tokenops/
 - `min_containers=0` in dev, `min_containers=1` in production
 - Deployed independently: `modal deploy modal_app/embedder.py`
 
+### `modal_app/proxy_app.py`
+- Modal web endpoint wrapping the FastAPI proxy for cloud deployment
+- Targets Neon (Postgres), Qdrant Cloud, Langfuse as managed backends
+
+### `modal_app/dashboard_app.py`
+- Modal web endpoint wrapping the Streamlit dashboard
+
+### `modal_app/agent_app.py`
+- Modal cron function running the optimizer agent on schedule
+
 ## Database tables
 
 All definitions in `db/schema.sql`. Modules must NOT define schema in code.
@@ -182,25 +204,28 @@ All definitions in `db/schema.sql`. Modules must NOT define schema in code.
 
 ```
 host_app endpoint
-    │  POST /v1/chat/completions  {messages, tag}
+    │  POST /v1/chat/completions  {messages, model?, tag?}
+    │  Headers: X-Tag, X-TokenOps-Route, X-TokenOps-Cache
     ▼
 proxy/main.py
     │
-    ├─ cache.lookup(prompt)
+    ├─ cache.lookup(prompt)                     # skipped if X-TokenOps-Cache: skip
     │       ├─ HIT  → fire-and-forget: ledger.log(cached=True)
-    │       │         return cached response immediately
+    │       │         return OpenAI-spec JSON + X-TokenOps-* headers
     │       └─ MISS → continue
     │
-    ├─ classifier.classify(prompt)  → tier: low|mid|high
+    ├─ Routing decision:
+    │       ├─ X-TokenOps-Route: auto  → classifier.classify(prompt) → tier
+    │       │                            → router.select_model(tier) → model
+    │       └─ default (passthrough)   → use req.model as-is, tier="passthrough"
+    │              (if req.model is None → fall back to classifier)
     │
-    ├─ router.select_model(tier)    → model name
-    │
-    ├─ LLM call (langchain-anthropic)
+    ├─ LLM call (langchain-openai via OpenRouter)
     │
     ├─ asyncio.create_task(cache.store(...))    # non-blocking
     ├─ asyncio.create_task(ledger.log_request(...))  # non-blocking
     │
-    └─ return response to host_app
+    └─ return OpenAI-spec JSON body + X-TokenOps-* headers
 ```
 
 ## Data flow — agent cycle (every 15 minutes)

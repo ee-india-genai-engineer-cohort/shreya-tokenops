@@ -99,13 +99,16 @@ All loaded via Pydantic Settings in `proxy/config.py`. Never access
 ```
 OPENROUTER_API_KEY         # required
 OPENROUTER_BASE_URL        # default: https://openrouter.ai/api/v1
-DATABASE_URL               # postgresql+asyncpg://...
-QDRANT_HOST                # default: localhost
-QDRANT_PORT                # default: 6333
+DATABASE_URL               # postgresql://... (asyncpg native URL, no +asyncpg suffix)
+QDRANT_URL                 # full URL including https:// and port
+QDRANT_API_KEY             # optional — leave blank for local Qdrant (Docker)
 MODAL_EMBEDDER_APP         # modal app name for embedder
 PROXY_URL                  # http://localhost:8000 (used by host_app)
 AGENT_RUN_INTERVAL_MINUTES # default: 15
 RULES_RELOAD_INTERVAL_SEC  # default: 60
+LANGFUSE_PUBLIC_KEY        # optional — Langfuse LLM observability
+LANGFUSE_SECRET_KEY        # optional
+LANGFUSE_HOST              # default: https://us.cloud.langfuse.com
 ```
 
 ## Error handling conventions
